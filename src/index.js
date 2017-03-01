@@ -38,7 +38,8 @@ var transferTo = [];                                          //customer list of
 var accounts = [];                                            //accounts of the selected customer on friends list
 var multipleFriendsFlag = false;                              //true if multiple friends with the same name
 var multipleAccountsFlag = false;                             //true if more than one account for selected transferee
-var url = "http://capitalone-rest-api.herokuapp.com/api/";    //rest api url
+//var url = "http://capitalone-rest-api.herokuapp.com/api/";  //old rest api url
+var url = "http://psu-capitalone-api.herokuapp.com/";         //rest api url
 var myId = "580e9b9ed15f730003173037";                        //hardcoded id of customer for demonstration purposes
 var myAccount = "5821240e17d9f90003c29f82";                   //hardcoded id of account to transfer from for demonstration purposes
 /*///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
