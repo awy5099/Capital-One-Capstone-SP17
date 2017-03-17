@@ -11,8 +11,9 @@
 /**
  * App ID for the skill
  */
-var APP_ID =  "amzn1.ask.skill.3498e299-c62e-4251-bdcd-42925085447d"; //replace with "amzn1.echo-sdk-ams.app.[your-unique-value-here]";
-
+//var APP_ID =  "amzn1.ask.skill.3498e299-c62e-4251-bdcd-42925085447d"; //replace with "amzn1.echo-sdk-ams.app.[your-unique-value-here]";
+//var APP_ID =  "amzn1.ask.skill.7194f497-0309-40f3-b80b-991b667d4f1f"; // new app_id
+var APP_ID = "amzn1.ask.skill.0d40f034-24b8-46c5-83a5-da8b2768fe98"; // new app_id with updated schema
 
 /**
  * The AlexaSkill prototype and helper functions
@@ -26,7 +27,6 @@ var http = require('http');
  *
  * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Introduction_to_Object-Oriented_JavaScript#Inheritance
  */
-
 var CapitalOne = function () {
     AlexaSkill.call(this, APP_ID);
 };
@@ -37,11 +37,14 @@ var friend = null;                                            //friend name for 
 var transferTo = [];                                          //customer list of people on friends list that match the name of friend variable
 var accounts = [];                                            //accounts of the selected customer on friends list
 var multipleFriendsFlag = false;                              //true if multiple friends with the same name
-var multipleAccountsFlag = false;                             //true if more than one account for selected transferee
-//var url = "http://capitalone-rest-api.herokuapp.com/api/";  //old rest api url
-var url = "http://psu-capitalone-api.herokuapp.com/api";         //new rest api url
-var myId = "580e9b9ed15f730003173037";                        //hardcoded id of customer for demonstration purposes
-var myAccount = "5821240e17d9f90003c29f82";                   //hardcoded id of account to transfer from for demonstration purposes
+var multipleAccountsFlag = false;
+var acc_type = null;										  // can either be checking or savings
+//var url = "http://capitalone-rest-api.herokuapp.com/api/";  // old rest api url
+var url = "http://psu-capitalone-api.herokuapp.com/api/";     // new rest api url
+//var myId = "580e9b9ed15f730003173037";                      // old customer id -- //hardcoded id of customer for demonstration purposes
+var myId = "58c35798f36d281631b3bf81"; 						  // new customer id
+//var myAccount = "5821240e17d9f90003c29f82";                 // old account id -- //hardcoded id of account to transfer from for demonstration purposes
+var myAccount = "58c3554bf36d281631b3bf48";					  // new account id
 /*///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //    To remove hardcoded id's, account linking will need to be implemented. The details for account linking can be seen at:
 //      https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/linking-an-alexa-user-with-a-user-in-your-system
@@ -70,14 +73,6 @@ CapitalOne.prototype.eventHandlers.onSessionEnded = function (sessionEndedReques
 };
 
 CapitalOne.prototype.intentHandlers = {
-  //TransferIntent gathers information about a transfer request
-  //Utterances:
-  //TransferIntent {transfer_syn} {dollar_amount} {dollar_syn} and {cent_amount} {cent_syn} to {friend_name}
-  //TransferIntent {transfer_syn} {dollar_amount} {dollar_syn} to {friend_name}
-  //TransferIntent {transfer_syn} {cent_amount} {cent_syn} to {friend_name}
-  //TransferIntent {transfer_syn} {friend_name} {dollar_amount} {dollar_syn} and {cent_amount} {cent_syn}
-  //TransferIntent {transfer_syn} {friend_name} {dollar_amount} {dollar_syn}
-  //TransferIntent {transfer_syn} {friend_name} {cent_amount} {cent_syn}
   "TransferIntent": function (intent, session, response) {
     dollars = intent.slots.dollar_amount.value;   //overwrite old dollar amount
     cents = intent.slots.cent_amount.value;       //overwrite old cents amount
@@ -101,67 +96,75 @@ CapitalOne.prototype.intentHandlers = {
        response.tellWithoutEnd("I couldn't understand that. Please try your transfer again.");
        return;
     }
+
     // No friend is found
     if (!friend){
       response.tellWithoutEnd("No friend identified. Please try your transfer again.");
       return;
     }
+
     //Negative dollar amount, dollar amount greater than 5000 or cent amount out of range of 0 to 100
-    else if ((dollars != null && dollars <= 0) || (dollars != null && dollars > 5000) || (cents != null && (cents < 0 || cents >= 100))) {
+    if ((dollars != null && dollars <= 0) || (dollars != null && dollars > 5000) || (cents != null && (cents < 0 || cents >= 100))) {
        resetSavedValues();
        response.tellWithoutEnd("I couldn't understand that. Please try your transfer again with a valid amount between 0 and 5000 dollars.");
        return;
-    }
-    else {
-      //http request to get friend customer id's matching name friend
-      getFriendsList(myId, function(friends) {
+    } else {
+      getFriendsList(myId, function(friends) { //http request to get friend customer id's matching name friend
         //no matching friend on friends list
         if (friends == null || (friends != null && friends.length == 0)) {
           response.tell("I couldn't access your friends list. Please try your transfer again.");
           return;
-        }
-        //found a matching friend name
-        else {
+        } else { //found a matching friend name
           var friendCount = friends.length;     //length of friends with matching name
           var responseCount = 0;                //customer object count currently retrieved
 
           //go through all friend id's and get the customer object for each
           for (var i = 0; i < friends.length; i++) {
             //http request to get friend object
-            getCustomer(friends[i], function(obj) {
+            getCustomer(friends[i], function(obj) { //make sure customer exists before we try to get account
               responseCount++;      //customer object retrieved, increment responseCount
+              
               //push a good object onto potential transferees
+              //this was still returning objects ({ error: "customer does not exist"}) if a customer
+              //was not in the db, and it was trying to find a firstname for that object
+              //either do some check for obj.error != null, so we know that the customer was actually
+              //found since error property will only be != null if the customer exists, or we just
+              //assume that no account holder can have a friend that does not exist in the db...
+              //we will assume this for now
+              console.log("friends.length is: " + friends.length);
               if (obj != null && obj.first_name.toLowerCase() == friend.toLowerCase()) {
                 transferTo.push(obj);
               }
               //last response was retrieved, we can now check for multiple friends or accounts
               if (responseCount == friendCount) {
                 var multipleFriendsObj = getMultipleFriends();    //get multiple friends teller object
-                tellerMethod(multipleFriendsObj, response);       //tell the multiple friends teller object
-                //stop the program if we told a response
-                if (multipleFriendsObj != null) {
-                  return;
+                tellerMethod(multipleFriendsObj, response);       //tell the multiple friends teller object (user will then go to chooseNumberIntent)
+                if (multipleFriendsObj != null) { 				  //stop the program if we told a response (should not hit this point unless some error occured)
+					return;									
                 }
-                //http request to get accounts of the transferee
-                getAccounts(transferTo[0]._id, function(accountsObj) {
+
+               	//at this point we know we only have one candidate friend (multiple friends would go
+               	//to chooseNumberIntent) but friend might have multiple accounts
+               	//this GETS ANY ACCOUNTS WITH THIS CUSTOMER ID
+                getAccounts(transferTo[0]._id, function(accountsObj) { //http request to get accounts of the transferee
+                  console.log("::: In TransferIntent ::: (line 150) accountsObj.length is " + accountsObj.length + " ::: accountsObj.")
                   accounts = [];
-                  accounts.push(accountsObj);           //push on account object
-                  var multipleAccountsObj = getMultipleAccounts();    //this is code for multiple accounts, however this was not implemented in
-                                                                      //  the rest api. This has been tested and could be used for later adaptation.
-                  tellerMethod(multipleAccountsObj, response);    //tell the multiple accounts teller object
-                  //stop the program if we told a reponse
-                  if (multipleAccountsObj != null) {
+                  //accounts.push(accountsObj);           				//push on account object
+                  accounts = accountsObj.slice(); // accountsObj is a list, so the line above was pushing a list onto a list; just copy to accounts
+                  var multipleAccountsObj = getMultipleAccounts();
+                  	tellerMethod(multipleAccountsObj, response);    	//tell the multiple accounts teller object (user will then go to chooseNumberIntent)
+                  if (multipleAccountsObj != null) { //stop the program if we told a reponse (should not hit this point unless some error occured)
                     return;
                   }
 
-                  //tell response for zero accounts
-                  if (accounts.length == 0) {
+                  //at this point we know the one friend only has one candidate account
+
+                  if (accounts.length == 0) { //tell response for zero accounts --- redundant, getMultipleAccounts check this already
                     response.tell("I couldn't access " + friend + "'s accounts. Please try again later.");
                     return;
-                  }
-                  //tell response for a successful transfer
-                  else {
-                    response.tellWithoutEnd("Would you like to transfer " + formatMoney(dollars, cents) + " to " + transferTo[0].first_name + " " + transferTo[0].last_name + "? Please say complete transfer or cancel transfer.");
+                  } else { //user will respond with confirm or deny, sending them to ConfirmTransferIntent or DenyTransferIntent
+                    response.tellWithoutEnd("Would you like to transfer " + formatMoney(dollars, cents) + " to " + transferTo[0].first_name + 
+                    	" " + transferTo[0].last_name + "? Please say complete transfer or cancel transfer.");
                     return;
                   }
                 });
@@ -172,10 +175,7 @@ CapitalOne.prototype.intentHandlers = {
       });
     }
   },
-  //ConfirmTransferIntent confirms a transfer request and performs final transfer
-  //Utterances:
-  //ConfirmTransferIntent {confirm_syn} account {transfer_syn}
-  //ConfirmTransferIntent {confirm_syn} {transfer_syn}
+
   "ConfirmTransferIntent": function (intent, session, response) {
     //tell multiple friends response
     if (multipleFriendsFlag) {
@@ -190,6 +190,8 @@ CapitalOne.prototype.intentHandlers = {
     //valid transfer, post the transfer
     else if (dollars != null || cents != null) {
       //post transfer to rest api
+      console.log("::: In confirm : before POST ::: accounts.length is " + accounts.length + 
+      	" ::: accounts[0].first_name is " + accounts[0].first_name);
       postTransfer(function (postResponse) {
         postResponse = JSON.parse(postResponse);        //get object from response
         //an error occured with the post, tell the error and log to alexa app
@@ -214,11 +216,7 @@ CapitalOne.prototype.intentHandlers = {
       return;
     }
   },
-  //DenyTransferIntent denies a transfer request and clears all saved values
-  //Utterances:
-  //DenyTransferIntent {deny_syn} account {transfer_syn}
-  //DenyTransferIntent {deny_syn} {transfer_syn}
-  //DenyTransferIntent {deny_syn}
+
   "DenyTransferIntent": function (intent, session, response) {
       //if values exist, clear them, end session
       if (dollars != null || cents != null) {
@@ -232,8 +230,7 @@ CapitalOne.prototype.intentHandlers = {
           return;
       }
   },
-  //ChooseNumberIntent acts as an options selector. Depending on which flag is selected, the intent will work differently.
-  //ChooseNumberIntent {number}
+
   "ChooseNumberIntent": function (intent, session, response) {
       //selection of multiple friends
       if (multipleFriendsFlag) {
@@ -287,15 +284,61 @@ CapitalOne.prototype.intentHandlers = {
         return;
       }
   },
+
+  // check account balances of the currently logged on customer, which is hardcoded for demonstration purposes
   "BalanceEnquiryIntent": function (intent, session, response) {
-      getAccounts(myId, function(accountObj) {
-       var balance = accountObj.balance;
-       response.tell("Your balance is " + formatMoney(Math.floor(balance), Math.round(100 * (balance - Math.floor(balance)))));
-       return;
-    });
+	getAccounts(myId, function(accountObjs) {
+		var balance = null;
+		var responseString = null;
+		if (accountObjs == null) {
+			response.tell("Sorry, no accounts exist.");
+		} else if (accountObjs.length == 1) {
+	       balance = accountObjs[0].balance;
+	       response.tell("Your balance is " + formatMoney(Math.floor(balance), Math.round(100 * (balance - Math.floor(balance)))));
+	       return;
+		} else if (accountObjs.length > 1) {
+			responseString = "You have " + accountObjs.length + "accounts. ";
+			for (var i = 0; i < accountObjs.length; i++) {
+				balance = accountObjs[i].balance;
+				responseString += "Your balance for " + accountObjs[i].nickname + " is " + formatMoney(Math.floor(balance),
+	       			Math.round(100 * (balance - Math.floor(balance)))) + ". ";
+			}
+			response.tell(responseString);
+			return;
+		}
+	});
   },
+
   "AMAZON.HelpIntent": function (intent, session, response) {
       response.ask("You can perform bank transactions.", "You can perform bank transactions. Try something like, transfer ten dollars and fifty cents to John");
+  },
+
+  // create new savings/checking account under the same customerID (i.e. the one currently logged on, which
+  // which is hardcoded in this case)
+  "CreateNewAccountIntent": function (intent, session, response) {
+  	acc_type = intent.slots.account_type.value;
+  	if ((acc_type == "savings") || (acc_type == "checking") || (acc_type == "credit card")) { // if user wants to create savings or checking account
+  		postAccount(function(postResponse) {
+  			postResponse = JSON.parse(postResponse); //get object from response
+	        //an error occured with the post, tell the error and log to alexa app
+	        if (postResponse != null && postResponse.error != null) {
+	          resetSavedValues();
+	          response.tellWithCard(postResponse.error);
+	          return;
+	        }
+	        //successful creation, tell the success and log to alexa app
+	        else if (postResponse != null && postResponse.success != null) {
+	          var responseString = "Successfully created new " + acc_type + " account.";
+	          resetSavedValues();
+	          response.tellWithCard(responseString);
+	          return;
+	        }
+    	});
+    	return;
+  	} else { // if user did not say savings or checking
+  		resetSavedValues();
+  		response.tell("Invalid account type. Please try again.");
+  	}
   }
 };
 
@@ -335,7 +378,8 @@ function getAccounts(customerId, callback) {
       });
       message.on('error', function() {
         console.log(message);
-        var returnArr = [];
+        //var returnArr = [];
+        var returnArr = null;
         callback(returnArr);
       });
   });
@@ -467,15 +511,15 @@ function postTransfer(callback) {
   //formate transfer into post object
   var transfer_data = JSON.stringify({
     "type": "p2p",
+    "sender": myAccount,
     "receiver": accounts[0]._id,
     "amount": parseFloat((dollars == null ? 0 : dollars) + "." + postCents),
-    "description": "Transfer from " + myAccount + " to " + accounts[0]._id,
-    "sender": myAccount
+    "description": "Transfer from " + myAccount + " to " + accounts[0]._id
   });
 
   //specify post options
   var options = {
-    hostname: 'capitalone-rest-api.herokuapp.com',
+    hostname: 'psu-capitalone-api.herokuapp.com',
     port: 80,
     path: '/api/accounts/' + myAccount + '/transfers',
     method: 'POST',
@@ -493,9 +537,53 @@ function postTransfer(callback) {
       postResponse += body;
     });
     res.on('end', function () {
+      console.log("--- Ended here ::: postResponse: " + postResponse);
       callback(postResponse);
     });
   }).write(transfer_data);
+}
+
+//http request to post the new account
+//PRE:    acc_type is either checking or savings
+//POST:   The function calls callback with the response object.
+function postAccount(callback) {
+  //formate new account into post object
+  // (nickname + Math.floor will cast the number to string to make random nicknames)
+  // we can add intent to specify nicknames later b/c it might not let us create another acc
+  // if the random num generator happens to land on the same number twice (since we compare
+  // by nicknames in routes/account/)
+  var account_data = JSON.stringify({
+	"type": acc_type,
+	"nickname": "account" + Math.floor(Math.random() * 1000),
+	"rewards": 0,
+	"balance": 0.0,
+	"account_number": Math.floor(Math.random() * 100000),
+	"customer_id": myId
+  });
+
+  //specify post options
+  var options = {
+    hostname: 'psu-capitalone-api.herokuapp.com',
+    port: 80,
+    path: '/api/customers/' + myId + '/account',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(account_data)
+    }
+  };
+
+  //perform http request for post
+  var req = http.request(options, function(res) {
+    res.setEncoding('utf8');
+    var postResponse = "";
+    res.on('data', function (body) {
+      postResponse += body;
+    });
+    res.on('end', function () {
+      callback(postResponse);
+    });
+  }).write(account_data);
 }
 
 //formatMoney puts dollars and cents into word form
@@ -527,6 +615,7 @@ function resetSavedValues() {
    accounts = [];
    multipleFriendsFlag = false;
    multipleAccountsFlag = false;
+   acc_type = null;
 }
 
 // Create the handler that responds to the Alexa Request.
